@@ -1,0 +1,13 @@
+fastapi[all]
+numpy
+pandas
+matplotlib
+scikit-learn
+ipykernel
+black
+ruff
+mypy
+sqlalchemy
+imblearn
+xgboost
+gunicorn
