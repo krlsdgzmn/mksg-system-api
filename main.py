@@ -1,4 +1,4 @@
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
@@ -117,8 +117,22 @@ async def predict_order_status(
 
 # Endpoint to read all predicted order status
 @app.get("/api/order_status/", response_model=List[OrderStatusModel])
-async def read_order_status(db: Session = Depends(get_db)):
-    return db.query(models.OrderStatus).all()
+async def read_order_status(
+    month: Optional[str] = Query(None),
+    week: Optional[int] = Query(None),
+    order_status: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+):
+    query = db.query(models.OrderStatus)
+
+    if month is not None:
+        query = query.filter(models.OrderStatus.month == month)
+    if week is not None:
+        query = query.filter(models.OrderStatus.week == week)
+    if order_status is not None:
+        query = query.filter(models.OrderStatus.order_status == order_status)
+
+    return query.all()
 
 
 # Endpoint to delete a predicted order status
