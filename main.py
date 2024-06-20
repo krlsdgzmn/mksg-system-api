@@ -2,7 +2,7 @@ from fastapi import Depends, FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Annotated, Optional, List, Union
 import pickle
 from sqlalchemy.orm import Session
 import models
@@ -118,17 +118,17 @@ async def predict_order_status(
 # Endpoint to read all predicted order status
 @app.get("/api/order_status/", response_model=List[OrderStatusModel])
 async def read_order_status(
-    month: Optional[str] = Query(None),
-    week: Optional[int] = Query(None),
+    month: Annotated[Union[List[str], None], Query()] = None,
+    week: Annotated[Union[List[int], None], Query()] = None,
     order_status: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ):
     query = db.query(models.OrderStatus)
 
     if month is not None:
-        query = query.filter(models.OrderStatus.month == month)
+        query = query.filter(models.OrderStatus.month.in_(month))
     if week is not None:
-        query = query.filter(models.OrderStatus.week == week)
+        query = query.filter(models.OrderStatus.week.in_(week))
     if order_status is not None:
         query = query.filter(models.OrderStatus.order_status == order_status)
 
