@@ -120,7 +120,7 @@ async def predict_order_status(
 async def read_order_status(
     month: Annotated[Union[List[str], None], Query()] = None,
     week: Annotated[Union[List[int], None], Query()] = None,
-    order_status: Optional[str] = Query(None),
+    order_status: Annotated[Union[List[str], None], Query()] = None,
     db: Session = Depends(get_db),
 ):
     query = db.query(models.OrderStatus)
