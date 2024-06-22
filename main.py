@@ -130,7 +130,7 @@ async def read_order_status(
     if week is not None:
         query = query.filter(models.OrderStatus.week.in_(week))
     if order_status is not None:
-        query = query.filter(models.OrderStatus.order_status == order_status)
+        query = query.filter(models.OrderStatus.order_status.in_(order_status))
 
     return query.all()
 
