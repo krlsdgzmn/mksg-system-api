@@ -3,7 +3,7 @@ from sqlalchemy import Column, Integer, String
 
 
 class OrderStatus(Base):
-    __tablename__ = "predictions"
+    __tablename__ = "order_status"
 
     id = Column(Integer, primary_key=True)
     price_bin = Column(String)

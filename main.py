@@ -1,22 +1,23 @@
-from fastapi import Depends, FastAPI, Query
+import pickle
+
+import pandas as pd
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
-from typing import Annotated, Optional, List, Union
-import pickle
 from sqlalchemy.orm import Session
-import models
-from database import SessionLocal, engine
-import pandas as pd
+
 import predictors_mapping
+from database import Base, SessionLocal, engine
+from models import OrderStatus
 
-
-# Initialize the app
+# Initialize FastAPI
 app = FastAPI(
     title="MKSG Clothing System API",
     description="API for predicting order status and projecting visitors hourly for MKSG Clothing",
     version="1.0",
 )
+
 
 # Configure the CORSMiddleware
 app.add_middleware(
@@ -40,8 +41,8 @@ class OrderStatusBase(BaseModel):
     month: str
     week: int
     distance_bin: str
-    cancel_rate: Optional[int] = None
-    order_status: Optional[str] = None
+    cancel_rate: int | None = None
+    order_status: str | None = None
 
 
 # Pydantic model for database response
@@ -62,7 +63,7 @@ def get_db():
 
 
 # Create the database tables
-models.Base.metadata.create_all(bind=engine)
+Base.metadata.create_all(bind=engine)
 
 
 # Helper function to encode predictors
@@ -85,17 +86,17 @@ def encode_predictors(data: OrderStatusBase) -> pd.DataFrame:
     return df
 
 
-# Helper function to make a prediction using the loaded model
-def make_prediction(prediction_data: OrderStatusBase) -> str:
-    df = encode_predictors(prediction_data)
+# Helper function to make classify the order stauts using the loaded model
+def classify_order_status(data: OrderStatusBase) -> str:
+    df = encode_predictors(data)
     prediction = clf.predict(df)
     order_status = predictors_mapping.order_status[int(prediction[0])]
     return str(order_status)
 
 
 # Helper function to calculate the cancel rate
-def calculate_cancel_rate(prediction_data: OrderStatusBase) -> int:
-    df = encode_predictors(prediction_data)
+def calculate_cancel_rate(data: OrderStatusBase) -> int:
+    df = encode_predictors(data)
     prediction = clf.predict_proba(df)
     cancel_rate = prediction[0][1]
     return int(cancel_rate * 100)
@@ -103,34 +104,32 @@ def calculate_cancel_rate(prediction_data: OrderStatusBase) -> int:
 
 # Endpoint to create a new prediction of the order status
 @app.post("/api/order_status/", response_model=OrderStatusModel)
-async def predict_order_status(
-    prediction_data: OrderStatusBase, db: Session = Depends(get_db)
-):
-    prediction_data.order_status = make_prediction(prediction_data)
-    prediction_data.cancel_rate = calculate_cancel_rate(prediction_data)
-    db_prediction = models.OrderStatus(**prediction_data.model_dump())
-    db.add(db_prediction)
+async def create_order_status(data: OrderStatusBase, db: Session = Depends(get_db)):
+    data.order_status = classify_order_status(data)
+    data.cancel_rate = calculate_cancel_rate(data)
+    db_data = OrderStatus(**data.model_dump())
+    db.add(db_data)
     db.commit()
-    db.refresh(db_prediction)
-    return db_prediction
+    db.refresh(db_data)
+    return db_data
 
 
-# Endpoint to read all predicted order status
-@app.get("/api/order_status/", response_model=List[OrderStatusModel])
+# Endpoint to read all classified order status
+@app.get("/api/order_status/", response_model=list[OrderStatusModel])
 async def read_order_status(
-    month: Annotated[Union[List[str], None], Query()] = None,
-    week: Annotated[Union[List[int], None], Query()] = None,
-    order_status: Annotated[Union[List[str], None], Query()] = None,
+    month: str | None = None,
+    week: int | None = None,
+    order_status: str | None = None,
     db: Session = Depends(get_db),
 ):
-    query = db.query(models.OrderStatus)
+    query = db.query(OrderStatus)
 
     if month is not None:
-        query = query.filter(models.OrderStatus.month.in_(month))
+        query = query.filter(OrderStatus.month == month)
     if week is not None:
-        query = query.filter(models.OrderStatus.week.in_(week))
+        query = query.filter(OrderStatus.week == week)
     if order_status is not None:
-        query = query.filter(models.OrderStatus.order_status.in_(order_status))
+        query = query.filter(OrderStatus.order_status == order_status)
 
     return query.all()
 
@@ -138,7 +137,7 @@ async def read_order_status(
 # Endpoint to delete a predicted order status
 @app.delete("/api/order_status/{id}/")
 async def delete_order_status(id: int, db: Session = Depends(get_db)):
-    db.query(models.OrderStatus).filter(models.OrderStatus.id == id).delete()
+    db.query(OrderStatus).filter(OrderStatus.id == id).delete()
     db.commit()
     return {"message": "Order status deleted successfully"}
 
