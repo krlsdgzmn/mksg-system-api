@@ -13,12 +13,3 @@ class OrderForecast(Base):
     distance_bin = Column(String)
     cancel_rate = Column(Integer)
     order_status = Column(String)
-
-
-# class Users(Base):
-#     __tablename__ = "users"
-#
-#     id = Column(Integer, autoincrement=True)
-#     username = Column(String)
-#     password = Column(String)
-#     role = Column(String)
