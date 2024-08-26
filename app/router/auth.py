@@ -119,7 +119,7 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
-@router.post("/auth/token", response_model=TokenResponse)
+@router.post("/auth/token/", response_model=TokenResponse)
 def login_for_access_token(
     form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)
 ):
@@ -169,3 +169,12 @@ def verify_token(token: str = Depends(oauth2_bearer)) -> dict:
 async def verify_user_token(token: str):
     verify_token(token=token)
     return HTTP_200_OK
+
+
+# Endpoint to get all users
+@router.get("/auth/user/", response_model=list[UserResponse])
+async def read_users(db: Session = Depends(get_db)):
+    try:
+        return db.query(User).all()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
