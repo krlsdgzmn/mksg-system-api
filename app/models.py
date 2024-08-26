@@ -1,4 +1,4 @@
-from database import Base
+from app.database import Base
 from sqlalchemy import Column, Integer, String
 
 
@@ -13,3 +13,12 @@ class OrderForecast(Base):
     distance_bin = Column(String)
     cancel_rate = Column(Integer)
     order_status = Column(String)
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True)
+    username = Column(String, unique=True)
+    password = Column(String)
+    role = Column(String)

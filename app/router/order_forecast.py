@@ -1,34 +1,19 @@
 import pickle
 
 import pandas as pd
-from fastapi import Depends, FastAPI, HTTPException, Query
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-import predictors_mapping
-from database import Base, SessionLocal, engine
-from models import OrderForecast
+import app.predictors_mapping as predictors_mapping
+from app.database import SessionLocal
+from app.models import OrderForecast
 
-# Initialize FastAPI
-app = FastAPI(
-    title="MKSG Clothing System API",
-    description="API for predicting order status and projecting visitors hourly for MKSG Clothing",
-    version="0.1.0",
-)
+router = APIRouter(prefix="/api", tags=["order-forecast"])
 
-# Configure the CORSMiddleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # Load the pre-trained model
-with open("model/random_forest.pkl", "rb") as f:
+with open("app/random_forest.pkl", "rb") as f:
     clf = pickle.load(f)
 
 
@@ -58,10 +43,6 @@ def get_db():
         yield db
     finally:
         db.close()
-
-
-# Create the database tables
-Base.metadata.create_all(bind=engine)
 
 
 # Helper function to encode predictors
@@ -98,7 +79,7 @@ def calculate_cancel_rate(data: OrderForecastBase) -> int:
 
 
 # Endpoint to create a new order forecast
-@app.post("/api/order-forecast/", response_model=OrderForecastModel)
+@router.post("/order-forecast/", response_model=OrderForecastModel)
 async def create_order_forecast(data: OrderForecastBase, db: Session = Depends(get_db)):
     """
     Create a new order forecast.
@@ -116,7 +97,7 @@ async def create_order_forecast(data: OrderForecastBase, db: Session = Depends(g
 
 
 # Endpoint to read all classified order statuses
-@app.get("/api/order-forecast/", response_model=list[OrderForecastModel])
+@router.get("/order-forecast/", response_model=list[OrderForecastModel])
 async def read_order_forecast(
     month: list[str] | None = Query(None),
     week: list[int] | None = Query(None),
@@ -140,7 +121,7 @@ async def read_order_forecast(
 
 
 # Endpoint to delete a predicted order status
-@app.delete("/api/order-forecast/{id}/")
+@router.delete("/order-forecast/{id}/")
 async def delete_order_forecast(id: int, db: Session = Depends(get_db)):
     """
     Delete an order forecast by ID.
@@ -151,12 +132,3 @@ async def delete_order_forecast(id: int, db: Session = Depends(get_db)):
         return {"message": "Order forecast deleted successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
-# Endpoint to redirect to API documentation
-@app.get("/")
-async def redirect_to_docs():
-    """
-    Redirect to API documentation.
-    """
-    return RedirectResponse(url="/docs")

@@ -1,3 +1,4 @@
+aiofiles==24.1.0
 aiohappyeyeballs==2.4.0
 aiohttp==3.10.5
 aiosignal==1.3.1
@@ -7,11 +8,13 @@ anyio==4.4.0
 asyncpg==0.29.0
 attrs==24.2.0
 babel==2.16.0
+bcrypt==4.2.0
 certifi==2024.7.4
 charset-normalizer==3.3.2
 click==8.1.7
 dnspython==2.6.1
 docutils==0.21.2
+ecdsa==0.19.0
 email-validator==2.2.0
 fastapi==0.111.0
 fastapi-cli==0.0.4
@@ -25,6 +28,7 @@ imagesize==1.4.1
 itsdangerous==2.2.0
 jinja2==3.1.4
 joblib==1.4.2
+jose==1.0.0
 libsql-client==0.3.1
 markdown-it-py==3.0.0
 markupsafe==2.1.5
@@ -34,7 +38,10 @@ numpy==2.0.0
 orjson==3.10.6
 packaging==24.1
 pandas==2.2.2
+passlib==1.7.4
+pip==24.2
 psycopg2-binary==2.9.9
+pyasn1==0.6.0
 pydantic==2.8.2
 pydantic-core==2.20.1
 pydantic-extra-types==2.9.0
@@ -42,11 +49,13 @@ pydantic-settings==2.3.4
 pygments==2.18.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.0.1
+python-jose==3.3.0
 python-multipart==0.0.9
 pytz==2024.1
 pyyaml==6.0.1
 requests==2.32.3
 rich==13.7.1
+rsa==4.9
 scikit-learn==1.4.2
 scipy==1.14.0
 shellingham==1.5.4
