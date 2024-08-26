@@ -32,12 +32,16 @@ oauth2_bearer = OAuth2PasswordBearer(tokenUrl="auth/token")
 class UserBase(BaseModel):
     username: str
     password: str
+    first_name: str
+    last_name: str
     role: str
 
 
 class UserResponse(BaseModel):
     id: int
     username: str
+    first_name: str
+    last_name: str
     role: str
 
 
@@ -79,7 +83,13 @@ async def register_user(user: UserBase, db: Session = Depends(get_db)):
 
     # Hash the user's password and save the new user to the database
     hashed_password = bcrypt_context.hash(user.password)
-    db_user = User(username=user.username, password=hashed_password, role=user.role)
+    db_user = User(
+        username=user.username,
+        password=hashed_password,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        role=user.role,
+    )
     db.add(db_user)
     db.commit()
     return {"message": f"User {user.username} has been created."}
@@ -130,7 +140,13 @@ def login_for_access_token(
     return {
         "access_token": access_token,
         "token_type": "bearer",
-        "user": {"id": user.id, "username": user.username, "role": user.role},
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "role": user.role,
+        },
     }
 
 
