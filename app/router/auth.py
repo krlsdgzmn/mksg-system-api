@@ -169,12 +169,3 @@ def verify_token(token: str = Depends(oauth2_bearer)) -> dict:
 async def verify_user_token(token: str):
     verify_token(token=token)
     return HTTP_200_OK
-
-
-# Endpoint to get all users
-@router.get("/auth/user/", response_model=list[UserResponse])
-async def read_users(db: Session = Depends(get_db)):
-    try:
-        return db.query(User).all()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
