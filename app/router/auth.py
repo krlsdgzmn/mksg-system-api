@@ -96,12 +96,12 @@ async def register_user(user: UserBase, db: Session = Depends(get_db)):
 
 
 # Helper function to authenticate user credentials
-def authenticate_user(username: str, password: str, db: Session) -> User | bool:
+def authenticate_user(username: str, password: str, db: Session) -> UserBase | bool:
     """
     Authenticate the user by verifying the username and password.
     """
     user = get_user(db=db, username=username)
-    if not user or not bcrypt_context.verify(password, user.password):
+    if not user or not bcrypt_context.verify(password, str(user.password)):
         return False
     return user
 
@@ -127,7 +127,7 @@ def login_for_access_token(
     Authenticate the user and return the access token along with user data.
     """
     user = authenticate_user(form_data.username, form_data.password, db)
-    if not isinstance(user, User):  # Ensure user is a User instance
+    if not isinstance(user, User):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
@@ -169,3 +169,45 @@ def verify_token(token: str = Depends(oauth2_bearer)) -> dict:
 async def verify_user_token(token: str):
     verify_token(token=token)
     return HTTP_200_OK
+
+
+# Endpoint to update user by id
+@router.put("/auth/user/{id}/", response_model=UserResponse)
+async def update_user(id: int, updated_user: UserBase, db: Session = Depends(get_db)):
+    """
+    Update a user's details by their ID.
+    """
+    try:
+        # Retrieve the existing user by ID
+        prev_user = db.query(User).filter(User.id == id).first()
+        if not prev_user:
+            raise HTTPException(status_code=404, detail=f"User {id} not found")
+
+        # Hash the password if it was updated
+        if updated_user.password:
+            hashed_password = bcrypt_context.hash(updated_user.password)
+        else:
+            hashed_password = prev_user.password
+
+        # Update the user's details
+        # prev_user.username = updated_user.username
+        prev_user.password = hashed_password
+        prev_user.first_name = updated_user.first_name
+        prev_user.last_name = updated_user.last_name
+        prev_user.role = updated_user.role
+
+        # Commit the changes to the database
+        db.commit()
+        db.refresh(prev_user)
+
+        # Return the updated user data
+        return UserResponse(
+            id=prev_user.id,
+            username=prev_user.username,
+            first_name=prev_user.first_name,
+            last_name=prev_user.last_name,
+            role=prev_user.role,
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
