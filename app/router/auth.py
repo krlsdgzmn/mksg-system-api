@@ -135,7 +135,16 @@ def login_for_access_token(
         )
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXP_MINS)
     access_token = create_access_token(
-        data={"sub": user.username}, expires_delta=access_token_expires
+        data={
+            "user": {
+                "id": user.id,
+                "username": user.username,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "role": user.role,
+            },
+        },
+        expires_delta=access_token_expires,
     )
     return {
         "access_token": access_token,
@@ -157,7 +166,7 @@ def verify_token(token: str = Depends(oauth2_bearer)) -> dict:
     """
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username = payload.get("sub")
+        username = payload.get("user")
         if not username:
             raise HTTPException(status_code=403, detail="Token is invalid or expired")
         return payload
@@ -167,8 +176,7 @@ def verify_token(token: str = Depends(oauth2_bearer)) -> dict:
 
 @router.get("/auth/verify-token/{token}")
 async def verify_user_token(token: str):
-    verify_token(token=token)
-    return HTTP_200_OK
+    return verify_token(token=token)
 
 
 # Endpoint to update user by id
