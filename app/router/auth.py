@@ -8,7 +8,6 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from starlette.status import HTTP_200_OK
 
 from app.database import SessionLocal
 from app.models import User
