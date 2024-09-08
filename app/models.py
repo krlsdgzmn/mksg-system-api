@@ -1,5 +1,5 @@
 from app.database import Base
-from sqlalchemy import Column, Integer, String
+from sqlalchemy import Column, Integer, String, DateTime
 
 
 class OrderForecast(Base):
@@ -24,3 +24,17 @@ class User(Base):
     first_name = Column(String)
     last_name = Column(String)
     role = Column(String)
+
+
+class VisitorForecast(Base):
+    __tablename__ = "visitor_forecast"
+
+    datetime = Column(DateTime, primary_key=True)
+    value = Column(Integer)
+
+
+# class VisitorActual(Base):
+#     __tablename__ = "visitor_actual"
+#
+#     datetime = Column(DateTime, unique=True)
+#     value = Column(Integer)
