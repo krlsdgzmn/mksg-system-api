@@ -2,8 +2,8 @@ from app.database import Base
 from sqlalchemy import Column, Integer, String, DateTime
 
 
-class OrderForecast(Base):
-    __tablename__ = "order_forecast"
+class OrderPrediction(Base):
+    __tablename__ = "order_prediction"
 
     id = Column(Integer, primary_key=True)
     price_bin = Column(String)
@@ -13,17 +13,6 @@ class OrderForecast(Base):
     distance_bin = Column(String)
     cancel_rate = Column(Integer)
     order_status = Column(String)
-
-
-class User(Base):
-    __tablename__ = "users"
-
-    id = Column(Integer, primary_key=True)
-    username = Column(String, unique=True)
-    password = Column(String)
-    first_name = Column(String)
-    last_name = Column(String)
-    role = Column(String)
 
 
 class VisitorForecast(Base):
