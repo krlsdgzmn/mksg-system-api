@@ -1,5 +1,5 @@
 from app.database import Base
-from sqlalchemy import Column, Integer, String, DateTime
+from sqlalchemy import Column, Integer, String, DateTime, Float
 
 
 class OrderPrediction(Base):
@@ -18,12 +18,15 @@ class OrderPrediction(Base):
 class VisitorForecast(Base):
     __tablename__ = "visitor_forecast"
 
-    datetime = Column(DateTime, primary_key=True)
-    value = Column(Integer)
+    ds = Column(DateTime, primary_key=True, unique=True)
+    yhat = Column(Integer)
+    yhat_upper = Column(Integer)
+    yhat_lower = Column(Integer)
 
 
-# class VisitorActual(Base):
-#     __tablename__ = "visitor_actual"
-#
-#     datetime = Column(DateTime, unique=True)
-#     value = Column(Integer)
+class VisitorActual(Base):
+    __tablename__ = "visitor_actual"
+
+    date = Column(DateTime, primary_key=True, unique=True)
+    page_views = Column(Integer)
+    log = Column(Float)

@@ -1,14 +1,32 @@
-from datetime import datetime, timedelta, timezone
+import re
+from datetime import datetime, timezone
+from io import BytesIO, StringIO
 
-from fastapi import APIRouter, Depends, HTTPException
+import numpy as np
+import pandas as pd
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from prophet import Prophet
 from pydantic import BaseModel
-from sqlalchemy import and_
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
-from app.models import VisitorForecast
+from app.models import VisitorActual, VisitorForecast
 
 router = APIRouter(prefix="/api", tags=["visitor-forecast"])
+
+
+class VisitorForecastBase(BaseModel):
+    ds: datetime
+    yhat: int
+    yhat_upper: int
+    yhat_lower: int
+
+
+class VisitorActualBase(BaseModel):
+    date: datetime
+    page_views: int
+    log: float
 
 
 # Database dependency
@@ -20,210 +38,218 @@ def get_db():
         db.close()
 
 
-class VisitorForecastBase(BaseModel):
-    datetime: datetime
-    value: int
+# Helper function to remove comma and quotation
+def remove_comma_and_quotation(df, column_name):
+    pattern = r'[",]'
+    df[column_name] = df[column_name].apply(lambda x: re.sub(pattern, "", x))
+    return df
 
 
-# Endpoint to get the visitor forecast for seven days (including today)
-@router.get("/visitor-forecast/", response_model=list[VisitorForecastBase])
-def get_seven_day_forecast(db: Session = Depends(get_db)):
-    today = datetime.now(timezone.utc)
-    seven_days_later = today + timedelta(days=6)
+# Helper fucntion to preprocess yesterday's data
+def preprocess(yesterday_df) -> pd.DataFrame:
+    yesterday_df = yesterday_df[["Date", "Page Views"]]
+    yesterday_df.columns = ["date", "page_views"]
+    yesterday_df["date"] = pd.to_datetime(yesterday_df["date"], format="%d/%m/%Y %H:%M")
+    yesterday_df["page_views"] = yesterday_df["page_views"].astype(str)
+    yesterday_df = remove_comma_and_quotation(yesterday_df, "page_views")
+    yesterday_df["page_views"] = yesterday_df["page_views"].astype(int)
+    yesterday_df = yesterday_df.set_index("date")
+    yesterday_df["log"] = np.log1p(yesterday_df["page_views"])
+    return yesterday_df
+
+
+# Helper function to add features for training
+def add_features(df) -> pd.DataFrame:
+    # Add lag_1, lag_2, lag_24
+    df["lag_1"] = df["y"].shift(1)
+    df["lag_2"] = df["y"].shift(2)
+    df["lag_24"] = df["y"].shift(24)
+
+    # Apply backward fill to remove NaN values
+    df["lag_1"] = df["lag_1"].bfill()
+    df["lag_2"] = df["lag_2"].bfill()
+    df["lag_24"] = df["lag_24"].bfill()
+
+    # Add other regressors: hour, day_of_week, month
+    df["hour"] = df["ds"].dt.hour
+    df["day_of_week"] = df["ds"].dt.day_of_week
+    df["month"] = df["ds"].dt.month
+
+    return df
+
+
+# Helper function add feature lags in future DataFrame
+def populate_lags(model, future, initial_data, periods=24, freq="h"):
+    # Create future dataframe
+    future = model.make_future_dataframe(
+        periods=periods, freq=freq, include_history=False
+    )
+
+    # Initialize lag columns with the last known values
+    future["lag_1"] = initial_data["y"].iloc[-1]
+    future["lag_2"] = initial_data["y"].iloc[-2]
+    future["lag_24"] = initial_data["y"].iloc[-24]
+
+    # Add other regressors: hour, day_of_week, month
+    future["hour"] = future["ds"].dt.hour
+    future["day_of_week"] = future["ds"].dt.day_of_week
+    future["month"] = future["ds"].dt.month
+
+    # Iteratively predict and update lag values
+    for i in range(len(future)):
+        # Make prediction for current row
+        forecast = model.predict(future.iloc[[i]])
+        yhat = forecast["yhat"].values[0]
+
+        # Update lag values for next iterations
+        if i + 1 < len(future):
+            future.loc[future.index[i + 1], "lag_1"] = yhat
+        if i + 2 < len(future):
+            future.loc[future.index[i + 2], "lag_2"] = yhat
+        if i + 24 < len(future):
+            future.loc[future.index[i + 24], "lag_24"] = yhat
+
+    return future
+
+
+# Endpoint to import and retrain the model forecast
+@router.post("/visitor-forecast")
+async def import_and_retrain_forecast(
+    file: UploadFile = File(...), db: Session = Depends(get_db)
+):
+    try:
+        # Read the uploaded Excel file directly as a binary file
+        xlsx_file = await file.read()
+        yesterday_df = pd.read_excel(
+            BytesIO(xlsx_file),
+            skiprows=3,
+            sheet_name="All",
+            engine="openpyxl",
+        )
+
+        clean_df = preprocess(yesterday_df)
+        clean_df = clean_df.reset_index()
+
+        for _, row in clean_df.iterrows():
+            date = pd.to_datetime(row["date"])
+            page_views = row["page_views"]
+            log = row["log"]
+
+            visitor_actual = VisitorActual(date=date, page_views=page_views, log=log)
+            db.add(visitor_actual)
+
+        db.commit()
+
+        # Retrieve data from VisitorActual to create the training DataFrame
+        visitor_data = db.query(VisitorActual).all()
+        traffic_df = pd.DataFrame(
+            [(v.date, v.page_views, v.log) for v in visitor_data],
+            columns=["ds", "page_views", "y"],
+        )
+
+        traffic_df = add_features(traffic_df)
+        print(traffic_df)
+
+        # Initialize the Prophet model
+        prophet = Prophet()
+
+        # Add the regressors
+        prophet.add_regressor("lag_1")
+        prophet.add_regressor("lag_2")
+        prophet.add_regressor("lag_24")
+        prophet.add_regressor("hour")
+        prophet.add_regressor("day_of_week")
+        prophet.add_regressor("month")
+
+        # Fit the model
+        prophet.fit(traffic_df)
+
+        future_df = prophet.make_future_dataframe(
+            periods=24, include_history=False, freq="h"
+        )
+        future_df = populate_lags(prophet, future_df, traffic_df, periods=24, freq="h")
+        forecast_df = prophet.predict(future_df)
+        forecast_df["yhat"] = np.expm1(forecast_df["yhat"]).astype(int)
+        forecast_df["yhat_upper"] = np.expm1(forecast_df["yhat_upper"]).astype(int)
+        forecast_df["yhat_lower"] = np.expm1(forecast_df["yhat_lower"]).astype(int)
+        forecast_df = forecast_df[["ds", "yhat", "yhat_upper", "yhat_lower"]]
+
+        for _, row in forecast_df.iterrows():
+            ds = pd.to_datetime(row["ds"])
+            yhat = row["yhat"]
+            yhat_upper = row["yhat_upper"]
+            yhat_lower = row["yhat_lower"]
+
+            visitor_forecast = VisitorForecast(
+                ds=ds, yhat=yhat, yhat_upper=yhat_upper, yhat_lower=yhat_lower
+            )
+
+            db.add(visitor_forecast)
+
+        db.commit()
+
+        return {"data": "Data imported and retrained the model successfully."}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Endpoint to import existing merged csv file
+@router.post("/visitor-actual")
+async def import_merged_data(
+    file: UploadFile = File(...), db: Session = Depends(get_db)
+):
+    try:
+        csv_file = await file.read()
+        df = pd.read_csv(StringIO(csv_file.decode("utf-8")))
+
+        if not all(col in df.columns for col in ["date", "page_views", "log"]):
+            raise HTTPException(
+                status_code=400,
+                detail="CSV must contain date, page_views, and log columns.",
+            )
+
+        for _, row in df.iterrows():
+            date = pd.to_datetime(row["date"])
+            page_views = row["page_views"]
+            log = row["log"]
+
+            visitor_actual = VisitorActual(date=date, page_views=page_views, log=log)
+            db.add(visitor_actual)
+
+        db.commit()
+        return {"detail": "Data imported successfully."}
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Endpoint to get the visitor
+@router.get("/visitor-forecast", response_model=list[VisitorForecastBase])
+def get_today_forecast(db: Session = Depends(get_db)):
+    today = datetime.now(timezone.utc).date()
 
     forecast_data = (
         db.query(VisitorForecast)
         .filter(
-            and_(
-                VisitorForecast.datetime >= today,
-                VisitorForecast.datetime <= seven_days_later,
-            )
+            func.date(VisitorForecast.ds) == today,
         )
-        .order_by(VisitorForecast.datetime)
+        .order_by(VisitorForecast.ds)
         .all()
     )
 
     if not forecast_data:
-        raise HTTPException(
-            status_code=404, detail="No forecast data found for the next seven days"
-        )
+        raise HTTPException(status_code=404, detail="No forecast data found for today")
 
     return forecast_data
 
 
-sample_forecast = [
-    {"datetime": "2024-08-30 00:00:00", "value": 5},
-    {"datetime": "2024-08-30 01:00:00", "value": 10},
-    {"datetime": "2024-08-30 02:00:00", "value": 8},
-    {"datetime": "2024-08-30 03:00:00", "value": 8},
-    {"datetime": "2024-08-30 04:00:00", "value": 9},
-    {"datetime": "2024-08-30 05:00:00", "value": 7},
-    {"datetime": "2024-08-30 06:00:00", "value": 9},
-    {"datetime": "2024-08-30 07:00:00", "value": 10},
-    {"datetime": "2024-08-30 08:00:00", "value": 15},
-    {"datetime": "2024-08-30 09:00:00", "value": 20},
-    {"datetime": "2024-08-30 10:00:00", "value": 35},
-    {"datetime": "2024-08-30 11:00:00", "value": 45},
-    {"datetime": "2024-08-30 12:00:00", "value": 50},
-    {"datetime": "2024-08-30 13:00:00", "value": 48},
-    {"datetime": "2024-08-30 14:00:00", "value": 40},
-    {"datetime": "2024-08-30 15:00:00", "value": 38},
-    {"datetime": "2024-08-30 16:00:00", "value": 42},
-    {"datetime": "2024-08-30 17:00:00", "value": 50},
-    {"datetime": "2024-08-30 18:00:00", "value": 60},
-    {"datetime": "2024-08-30 19:00:00", "value": 65},
-    {"datetime": "2024-08-30 20:00:00", "value": 68},
-    {"datetime": "2024-08-30 21:00:00", "value": 55},
-    {"datetime": "2024-08-30 22:00:00", "value": 30},
-    {"datetime": "2024-08-30 23:00:00", "value": 15},
-    {"datetime": "2024-08-31 00:00:00", "value": 5},
-    {"datetime": "2024-08-31 01:00:00", "value": 10},
-    {"datetime": "2024-08-31 02:00:00", "value": 8},
-    {"datetime": "2024-08-31 03:00:00", "value": 8},
-    {"datetime": "2024-08-31 04:00:00", "value": 9},
-    {"datetime": "2024-08-31 05:00:00", "value": 7},
-    {"datetime": "2024-08-31 06:00:00", "value": 9},
-    {"datetime": "2024-08-31 07:00:00", "value": 10},
-    {"datetime": "2024-08-31 08:00:00", "value": 15},
-    {"datetime": "2024-08-31 09:00:00", "value": 20},
-    {"datetime": "2024-08-31 10:00:00", "value": 35},
-    {"datetime": "2024-08-31 11:00:00", "value": 45},
-    {"datetime": "2024-08-31 12:00:00", "value": 50},
-    {"datetime": "2024-08-31 13:00:00", "value": 48},
-    {"datetime": "2024-08-31 14:00:00", "value": 40},
-    {"datetime": "2024-08-31 15:00:00", "value": 38},
-    {"datetime": "2024-08-31 16:00:00", "value": 42},
-    {"datetime": "2024-08-31 17:00:00", "value": 50},
-    {"datetime": "2024-08-31 18:00:00", "value": 60},
-    {"datetime": "2024-08-31 19:00:00", "value": 65},
-    {"datetime": "2024-08-31 20:00:00", "value": 68},
-    {"datetime": "2024-08-31 21:00:00", "value": 55},
-    {"datetime": "2024-08-31 22:00:00", "value": 30},
-    {"datetime": "2024-08-31 23:00:00", "value": 15},
-    {"datetime": "2024-09-01 00:00:00", "value": 5},
-    {"datetime": "2024-09-01 01:00:00", "value": 10},
-    {"datetime": "2024-09-01 02:00:00", "value": 8},
-    {"datetime": "2024-09-01 03:00:00", "value": 8},
-    {"datetime": "2024-09-01 04:00:00", "value": 9},
-    {"datetime": "2024-09-01 05:00:00", "value": 7},
-    {"datetime": "2024-09-01 06:00:00", "value": 9},
-    {"datetime": "2024-09-01 07:00:00", "value": 10},
-    {"datetime": "2024-09-01 08:00:00", "value": 15},
-    {"datetime": "2024-09-01 09:00:00", "value": 20},
-    {"datetime": "2024-09-01 10:00:00", "value": 35},
-    {"datetime": "2024-09-01 11:00:00", "value": 45},
-    {"datetime": "2024-09-01 12:00:00", "value": 50},
-    {"datetime": "2024-09-01 13:00:00", "value": 48},
-    {"datetime": "2024-09-01 14:00:00", "value": 40},
-    {"datetime": "2024-09-01 15:00:00", "value": 38},
-    {"datetime": "2024-09-01 16:00:00", "value": 42},
-    {"datetime": "2024-09-01 17:00:00", "value": 50},
-    {"datetime": "2024-09-01 18:00:00", "value": 60},
-    {"datetime": "2024-09-01 19:00:00", "value": 65},
-    {"datetime": "2024-09-01 20:00:00", "value": 68},
-    {"datetime": "2024-09-01 21:00:00", "value": 55},
-    {"datetime": "2024-09-01 22:00:00", "value": 30},
-    {"datetime": "2024-09-01 23:00:00", "value": 15},
-    {"datetime": "2024-09-02 00:00:00", "value": 5},
-    {"datetime": "2024-09-02 01:00:00", "value": 10},
-    {"datetime": "2024-09-02 02:00:00", "value": 8},
-    {"datetime": "2024-09-02 03:00:00", "value": 8},
-    {"datetime": "2024-09-02 04:00:00", "value": 9},
-    {"datetime": "2024-09-02 05:00:00", "value": 7},
-    {"datetime": "2024-09-02 06:00:00", "value": 9},
-    {"datetime": "2024-09-02 07:00:00", "value": 10},
-    {"datetime": "2024-09-02 08:00:00", "value": 15},
-    {"datetime": "2024-09-02 09:00:00", "value": 20},
-    {"datetime": "2024-09-02 10:00:00", "value": 35},
-    {"datetime": "2024-09-02 11:00:00", "value": 45},
-    {"datetime": "2024-09-02 12:00:00", "value": 50},
-    {"datetime": "2024-09-02 13:00:00", "value": 48},
-    {"datetime": "2024-09-02 14:00:00", "value": 40},
-    {"datetime": "2024-09-02 15:00:00", "value": 38},
-    {"datetime": "2024-09-02 16:00:00", "value": 42},
-    {"datetime": "2024-09-02 17:00:00", "value": 50},
-    {"datetime": "2024-09-02 18:00:00", "value": 60},
-    {"datetime": "2024-09-02 19:00:00", "value": 65},
-    {"datetime": "2024-09-02 20:00:00", "value": 68},
-    {"datetime": "2024-09-02 21:00:00", "value": 55},
-    {"datetime": "2024-09-02 22:00:00", "value": 30},
-    {"datetime": "2024-09-02 23:00:00", "value": 15},
-    {"datetime": "2024-09-03 00:00:00", "value": 5},
-    {"datetime": "2024-09-03 01:00:00", "value": 10},
-    {"datetime": "2024-09-03 02:00:00", "value": 8},
-    {"datetime": "2024-09-03 03:00:00", "value": 8},
-    {"datetime": "2024-09-03 04:00:00", "value": 9},
-    {"datetime": "2024-09-03 05:00:00", "value": 7},
-    {"datetime": "2024-09-03 06:00:00", "value": 9},
-    {"datetime": "2024-09-03 07:00:00", "value": 10},
-    {"datetime": "2024-09-03 08:00:00", "value": 15},
-    {"datetime": "2024-09-03 09:00:00", "value": 20},
-    {"datetime": "2024-09-03 10:00:00", "value": 35},
-    {"datetime": "2024-09-03 11:00:00", "value": 45},
-    {"datetime": "2024-09-03 12:00:00", "value": 50},
-    {"datetime": "2024-09-03 13:00:00", "value": 48},
-    {"datetime": "2024-09-03 14:00:00", "value": 40},
-    {"datetime": "2024-09-03 15:00:00", "value": 38},
-    {"datetime": "2024-09-03 16:00:00", "value": 42},
-    {"datetime": "2024-09-03 17:00:00", "value": 50},
-    {"datetime": "2024-09-03 18:00:00", "value": 60},
-    {"datetime": "2024-09-03 19:00:00", "value": 65},
-    {"datetime": "2024-09-03 20:00:00", "value": 68},
-    {"datetime": "2024-09-03 21:00:00", "value": 55},
-    {"datetime": "2024-09-03 22:00:00", "value": 30},
-    {"datetime": "2024-09-03 23:00:00", "value": 15},
-    {"datetime": "2024-09-04 00:00:00", "value": 5},
-    {"datetime": "2024-09-04 01:00:00", "value": 10},
-    {"datetime": "2024-09-04 02:00:00", "value": 8},
-    {"datetime": "2024-09-04 03:00:00", "value": 8},
-    {"datetime": "2024-09-04 04:00:00", "value": 9},
-    {"datetime": "2024-09-04 05:00:00", "value": 7},
-    {"datetime": "2024-09-04 06:00:00", "value": 9},
-    {"datetime": "2024-09-04 07:00:00", "value": 10},
-    {"datetime": "2024-09-04 08:00:00", "value": 15},
-    {"datetime": "2024-09-04 09:00:00", "value": 20},
-    {"datetime": "2024-09-04 10:00:00", "value": 35},
-    {"datetime": "2024-09-04 11:00:00", "value": 45},
-    {"datetime": "2024-09-04 12:00:00", "value": 50},
-    {"datetime": "2024-09-04 13:00:00", "value": 48},
-    {"datetime": "2024-09-04 14:00:00", "value": 40},
-    {"datetime": "2024-09-04 15:00:00", "value": 38},
-    {"datetime": "2024-09-04 16:00:00", "value": 42},
-    {"datetime": "2024-09-04 17:00:00", "value": 50},
-    {"datetime": "2024-09-04 18:00:00", "value": 60},
-    {"datetime": "2024-09-04 19:00:00", "value": 65},
-    {"datetime": "2024-09-04 20:00:00", "value": 68},
-    {"datetime": "2024-09-04 21:00:00", "value": 55},
-    {"datetime": "2024-09-04 22:00:00", "value": 30},
-    {"datetime": "2024-09-04 23:00:00", "value": 15},
-    {"datetime": "2024-09-05 00:00:00", "value": 5},
-    {"datetime": "2024-09-05 01:00:00", "value": 10},
-    {"datetime": "2024-09-05 02:00:00", "value": 8},
-    {"datetime": "2024-09-05 03:00:00", "value": 8},
-    {"datetime": "2024-09-05 04:00:00", "value": 9},
-    {"datetime": "2024-09-05 05:00:00", "value": 7},
-    {"datetime": "2024-09-05 06:00:00", "value": 9},
-    {"datetime": "2024-09-05 07:00:00", "value": 10},
-    {"datetime": "2024-09-05 08:00:00", "value": 15},
-    {"datetime": "2024-09-05 09:00:00", "value": 20},
-    {"datetime": "2024-09-05 10:00:00", "value": 35},
-    {"datetime": "2024-09-05 11:00:00", "value": 45},
-    {"datetime": "2024-09-05 12:00:00", "value": 50},
-    {"datetime": "2024-09-05 13:00:00", "value": 48},
-    {"datetime": "2024-09-05 14:00:00", "value": 40},
-    {"datetime": "2024-09-05 15:00:00", "value": 38},
-    {"datetime": "2024-09-05 16:00:00", "value": 42},
-    {"datetime": "2024-09-05 17:00:00", "value": 50},
-    {"datetime": "2024-09-05 18:00:00", "value": 60},
-    {"datetime": "2024-09-05 19:00:00", "value": 65},
-    {"datetime": "2024-09-05 20:00:00", "value": 68},
-    {"datetime": "2024-09-05 21:00:00", "value": 55},
-    {"datetime": "2024-09-05 22:00:00", "value": 30},
-    {"datetime": "2024-09-05 23:00:00", "value": 15},
-]
-
-
-# Endpoint to return the sample forecast
-@router.get("/sample-forecast/", response_model=list[VisitorForecastBase])
-def get_sample_forecast():
-    return sample_forecast
+# Endpoint to read the actual page_views
+@router.get("/visitors-actual")
+async def read_visitor_actual(db: Session = Depends(get_db)):
+    try:
+        query = db.query(VisitorActual).order_by(VisitorActual.date.desc()).first()
+        return query
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
