@@ -25,7 +25,7 @@ CLIENT_URL_DEV = str(os.getenv("CLIENT_URL_DEV"))
 # Configure the CORSMiddleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[CLIENT_URL_DEV, CLIENT_URL_PROD],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
