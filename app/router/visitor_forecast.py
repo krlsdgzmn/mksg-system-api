@@ -7,6 +7,7 @@ import pandas as pd
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from prophet import Prophet
 from pydantic import BaseModel
+from pytz import timezone
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -251,7 +252,9 @@ async def import_merged_data(
 # Endpoint to get the visitor
 @router.get("/visitor-forecast", response_model=list[VisitorForecastBase])
 def get_today_forecast(db: Session = Depends(get_db)):
-    today = datetime.now(timezone.utc).date()
+    philippine_timezone = timezone("Asia/Manila")
+    today = datetime.now(philippine_timezone).date()
+    print(today)
 
     forecast_data = (
         db.query(VisitorForecast)
@@ -273,6 +276,7 @@ def get_today_forecast(db: Session = Depends(get_db)):
 async def read_visitor_actual(db: Session = Depends(get_db)):
     try:
         query = db.query(VisitorActual).order_by(VisitorActual.date.desc()).first()
+
         return {"date": query.date.date()}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
