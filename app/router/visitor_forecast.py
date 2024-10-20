@@ -130,6 +130,25 @@ async def import_and_retrain_forecast(
         clean_df = preprocess(yesterday_df)
         clean_df = clean_df.reset_index()
 
+        # Check the latest date in VisitorActual
+        latest_entry = (
+            db.query(VisitorActual).order_by(VisitorActual.date.desc()).first()
+        )
+
+        if latest_entry:
+            latest_date = latest_entry.date
+            uploaded_dates = pd.to_datetime(clean_df["date"])
+
+            # Check for sequential upload
+            for date in uploaded_dates:
+                if (date - latest_date).days <= 0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Uploaded date {date.date()} is not sequential. The next date should be before {latest_date.date()}.",
+                    )
+                latest_date = date  # Update latest date for the next iteration
+
+        # Proceed to upload the data
         for _, row in clean_df.iterrows():
             date = pd.to_datetime(row["date"])
             page_views = row["page_views"]
@@ -228,7 +247,8 @@ async def import_merged_data(
 # Endpoint to get the visitor
 @router.get("/visitor-forecast", response_model=list[VisitorForecastBase])
 def get_today_forecast(db: Session = Depends(get_db)):
-    today = datetime.now(timezone.utc).date()
+    # today = datetime.now(timezone.utc).date()
+    today = "2024-10-19"
 
     forecast_data = (
         db.query(VisitorForecast)
