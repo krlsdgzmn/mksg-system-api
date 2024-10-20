@@ -136,21 +136,24 @@ async def import_and_retrain_forecast(
         )
 
         if latest_entry:
-            latest_date = latest_entry.date
-            uploaded_dates = pd.to_datetime(clean_df["date"])
+            latest_date = pd.to_datetime(
+                latest_entry.date
+            )  # Keep the timestamp (date + time)
+            uploaded_dates = pd.to_datetime(
+                clean_df["date"]
+            )  # Ensure timestamps include hours
 
-            # Check for sequential upload
-            for date in uploaded_dates:
-                if (date - latest_date).days <= 0:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Uploaded date {date.date()} is not sequential. The next date should be before {latest_date.date()}.",
-                    )
-                latest_date = date  # Update latest date for the next iteration
+            # Check if the earliest uploaded date is directly after the latest date in the DB
+            expected_next_date = latest_date + pd.Timedelta(hours=1)
+            if uploaded_dates.min() != expected_next_date:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Uploaded date {uploaded_dates.min()} is not sequential. The next expected date is {expected_next_date}.",
+                )
 
-        # Proceed to upload the data
+        # Proceed to upload the data (now with the full timestamp)
         for _, row in clean_df.iterrows():
-            date = pd.to_datetime(row["date"])
+            date = pd.to_datetime(row["date"])  # Store full timestamp
             page_views = row["page_views"]
             log = row["log"]
 
@@ -167,7 +170,6 @@ async def import_and_retrain_forecast(
         )
 
         traffic_df = add_features(traffic_df)
-        print(traffic_df)
 
         # Initialize the Prophet model
         prophet = Prophet()
@@ -194,7 +196,9 @@ async def import_and_retrain_forecast(
         forecast_df = forecast_df[["ds", "yhat", "yhat_upper", "yhat_lower"]]
 
         for _, row in forecast_df.iterrows():
-            ds = pd.to_datetime(row["ds"])
+            ds = pd.to_datetime(
+                row["ds"]
+            )  # Ensure the full timestamp (with hours) is saved
             yhat = row["yhat"]
             yhat_upper = row["yhat_upper"]
             yhat_lower = row["yhat_lower"]
@@ -247,8 +251,7 @@ async def import_merged_data(
 # Endpoint to get the visitor
 @router.get("/visitor-forecast", response_model=list[VisitorForecastBase])
 def get_today_forecast(db: Session = Depends(get_db)):
-    # today = datetime.now(timezone.utc).date()
-    today = "2024-10-19"
+    today = datetime.now(timezone.utc).date()
 
     forecast_data = (
         db.query(VisitorForecast)
