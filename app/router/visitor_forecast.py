@@ -266,10 +266,10 @@ def get_today_forecast(db: Session = Depends(get_db)):
 
 
 # Endpoint to read the actual page_views
-@router.get("/visitors-actual")
+@router.get("/visitor-actual")
 async def read_visitor_actual(db: Session = Depends(get_db)):
     try:
         query = db.query(VisitorActual).order_by(VisitorActual.date.desc()).first()
-        return query
+        return {"date": query.date.date()}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
