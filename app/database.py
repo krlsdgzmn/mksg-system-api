@@ -6,7 +6,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
 # Production
-# load_dotenv()
+load_dotenv()
 DATABASE_URL = str(os.environ.get("POSTGRES_URL"))
 engine = create_engine(DATABASE_URL)
 
