@@ -172,12 +172,8 @@ def generate_holidays(years):
         )
 
         # Add dynamic holidays like Mother's Day and Father's Day
-        mother_day = pd.to_datetime(f"{year}-{calendar.MAY}-01") + pd.offsets.Week(
-            weekday=calendar.SUNDAY, n=1
-        )
-        father_day = pd.to_datetime(f"{year}-{calendar.JUNE}-01") + pd.offsets.Week(
-            weekday=calendar.SUNDAY, n=2
-        )
+        mother_day = pd.to_datetime(f"{year}-05-01") + pd.offsets.Week(weekday=6, n=1)
+        father_day = pd.to_datetime(f"{year}-06-01") + pd.offsets.Week(weekday=6, n=2)
         holiday_dates.extend(
             [
                 {
@@ -193,6 +189,12 @@ def generate_holidays(years):
                     "upper_window": 1,
                 },
             ]
+        )
+        mother_day = pd.to_datetime(f"{year}-{calendar.MAY}-01") + pd.offsets.Week(
+            weekday=calendar.SUNDAY, n=1
+        )
+        father_day = pd.to_datetime(f"{year}-{calendar.JUNE}-01") + pd.offsets.Week(
+            weekday=calendar.SUNDAY, n=2
         )
 
         # Add payday (15th and last day of the month)
