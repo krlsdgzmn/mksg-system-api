@@ -1,9 +1,11 @@
+import calendar
 import re
 from datetime import datetime, timezone
 from io import BytesIO, StringIO
 
 import numpy as np
 import pandas as pd
+from dateutil import easter
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from prophet import Prophet
 from pydantic import BaseModel
@@ -113,6 +115,112 @@ def populate_lags(model, future, initial_data, periods=24, freq="h"):
     return future
 
 
+# Helper function to generate all holidays
+def generate_holidays(years):
+    holiday_dates = []
+
+    # Fixed holidays
+    fixed_holidays = {
+        "New Year's Day": "01-01",
+        "Valentine's Day": "02-14",
+        "All Saints' Day": "11-01",
+        "Christmas Day": "12-25",
+        "Halloween": "10-31",
+    }
+
+    for year in years:
+        # Add fixed holidays
+        for holiday_name, month_day in fixed_holidays.items():
+            holiday_dates.append(
+                {
+                    "holiday": holiday_name,
+                    "ds": pd.to_datetime(f"{year}-{month_day}"),
+                    "lower_window": 0,
+                    "upper_window": 1,
+                }
+            )
+
+        # Add Easter-related holidays
+        easter_date = easter.easter(year)
+        holiday_dates.extend(
+            [
+                {
+                    "holiday": "Maundy Thursday",
+                    "ds": easter_date - pd.Timedelta(days=3),
+                    "lower_window": 0,
+                    "upper_window": 1,
+                },
+                {
+                    "holiday": "Good Friday",
+                    "ds": easter_date - pd.Timedelta(days=2),
+                    "lower_window": 0,
+                    "upper_window": 1,
+                },
+                {
+                    "holiday": "Black Saturday",
+                    "ds": easter_date - pd.Timedelta(days=1),
+                    "lower_window": 0,
+                    "upper_window": 1,
+                },
+                {
+                    "holiday": "Easter Sunday",
+                    "ds": easter_date,
+                    "lower_window": 0,
+                    "upper_window": 1,
+                },
+            ]
+        )
+
+        # Add dynamic holidays like Mother's Day and Father's Day
+        mother_day = pd.to_datetime(f"{year}-{calendar.MAY}-01") + pd.offsets.Week(
+            weekday=calendar.SUNDAY, n=1
+        )
+        father_day = pd.to_datetime(f"{year}-{calendar.JUNE}-01") + pd.offsets.Week(
+            weekday=calendar.SUNDAY, n=2
+        )
+        holiday_dates.extend(
+            [
+                {
+                    "holiday": "Mother's Day",
+                    "ds": mother_day,
+                    "lower_window": 0,
+                    "upper_window": 1,
+                },
+                {
+                    "holiday": "Father's Day",
+                    "ds": father_day,
+                    "lower_window": 0,
+                    "upper_window": 1,
+                },
+            ]
+        )
+
+        # Add payday (15th and last day of the month)
+        for month in range(1, 13):
+            mid_month = pd.to_datetime(f"{year}-{month}-15")
+            last_day = pd.to_datetime(
+                f"{year}-{month}-{calendar.monthrange(year, month)[1]}"
+            )
+            holiday_dates.extend(
+                [
+                    {
+                        "holiday": "Payday",
+                        "ds": mid_month,
+                        "lower_window": 0,
+                        "upper_window": 1,
+                    },
+                    {
+                        "holiday": "Payday",
+                        "ds": last_day,
+                        "lower_window": 0,
+                        "upper_window": 1,
+                    },
+                ]
+            )
+
+    return pd.DataFrame(holiday_dates)
+
+
 # Endpoint to import and retrain the model forecast
 @router.post("/visitor-forecast")
 async def import_and_retrain_forecast(
@@ -171,9 +279,17 @@ async def import_and_retrain_forecast(
         )
 
         traffic_df = add_features(traffic_df)
+        # Generate holidays for the range of years
+        years = list(range(2021, 2031))  # Define the range of years
+        holidays_df = generate_holidays(years)
 
         # Initialize the Prophet model
-        prophet = Prophet()
+        prophet = Prophet(
+            holidays=holidays_df,
+            changepoint_prior_scale=0.036532508055676954,
+            seasonality_prior_scale=2.789413082766757,
+            holidays_prior_scale=5.184962275280706,
+        )
 
         # Add the regressors
         prophet.add_regressor("lag_1")
