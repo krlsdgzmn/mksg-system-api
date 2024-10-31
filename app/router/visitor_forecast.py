@@ -190,35 +190,6 @@ def generate_holidays(years):
                 },
             ]
         )
-        mother_day = pd.to_datetime(f"{year}-{calendar.MAY}-01") + pd.offsets.Week(
-            weekday=calendar.SUNDAY, n=1
-        )
-        father_day = pd.to_datetime(f"{year}-{calendar.JUNE}-01") + pd.offsets.Week(
-            weekday=calendar.SUNDAY, n=2
-        )
-
-        # Add payday (15th and last day of the month)
-        for month in range(1, 13):
-            mid_month = pd.to_datetime(f"{year}-{month}-15")
-            last_day = pd.to_datetime(
-                f"{year}-{month}-{calendar.monthrange(year, month)[1]}"
-            )
-            holiday_dates.extend(
-                [
-                    {
-                        "holiday": "Payday",
-                        "ds": mid_month,
-                        "lower_window": 0,
-                        "upper_window": 1,
-                    },
-                    {
-                        "holiday": "Payday",
-                        "ds": last_day,
-                        "lower_window": 0,
-                        "upper_window": 1,
-                    },
-                ]
-            )
 
     return pd.DataFrame(holiday_dates)
 
