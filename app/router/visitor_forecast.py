@@ -373,7 +373,7 @@ async def read_visitor_actual(db: Session = Depends(get_db)):
 
 # Endpoint to read promotional trends
 @router.get("/promotional-trends")
-async def read_promotional_trends(db: Session = Depends(get_db)):
+async def read_promotional_trends(month: str, db: Session = Depends(get_db)):
     try:
         query = db.query(VisitorActual).order_by(VisitorActual.date.desc()).all()
 
@@ -393,7 +393,6 @@ async def read_promotional_trends(db: Session = Depends(get_db)):
         df["hour"] = df.date.dt.hour
 
         # Holidays per month
-        month = "December"
         monthDict = {
             "January": 1,
             "February": 2,
