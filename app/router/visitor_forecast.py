@@ -433,3 +433,81 @@ async def read_promotional_trends(month: str, db: Session = Depends(get_db)):
         return df_grouped.to_dict()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Endpoint to read promotional trends
+@router.get("/promotional-trends/metrics")
+async def read_promotional_metrics(month: str, db: Session = Depends(get_db)):
+    try:
+        query = db.query(VisitorActual).order_by(VisitorActual.date.desc()).all()
+
+        # Convert the query result to a list of dictionaries
+        data = [item.__dict__ for item in query]
+
+        # Remove SQLAlchemy metadata (e.g., `_sa_instance_state`)
+        for record in data:
+            record.pop("_sa_instance_state", None)
+
+        # Convert the list of dictionaries to a Pandas DataFrame
+        df = pd.DataFrame(data)
+
+        df["date"] = pd.to_datetime(df["date"], format="%d/%m/%Y %H:%M")
+
+        # Add hour
+        df["hour"] = df.date.dt.hour
+
+        # Holidays per month
+        monthDict = {
+            "January": 1,
+            "February": 2,
+            "March": 3,
+            "April": 4,
+            "May": 5,
+            "June": 6,
+            "July": 7,
+            "August": 8,
+            "September": 9,
+            "October": 10,
+            "November": 11,
+            "December": 12,
+        }
+        value = monthDict[month]
+
+        # Create the promotional events dataframe
+        monthlyPromo = df[(df.date.dt.month == value) & (df.date.dt.day == value)]
+        midMonth = df[(df.date.dt.month == value) & (df.date.dt.day == 15)]
+        endMonth = df[df.date.dt.is_month_end & (df.date.dt.month == value)]
+
+        # Combine all dataframes
+        events = pd.concat(
+            [
+                monthlyPromo.assign(event="Monthly Promo"),
+                midMonth.assign(event="Mid-Month"),
+                endMonth.assign(event="End-Month"),
+            ]
+        )
+
+        # Group by hour and event
+        df_grouped = events.groupby(["hour", "event"])["page_views"].mean().unstack()
+
+        # Cast the values to integers
+        df_grouped = df_grouped.fillna(0).astype(int)
+
+        # Get the dates of the month that are not in events
+        nonPromo = df[(df["date"].dt.month == value) & ~df.date.isin(events.date)]
+
+        # Compute the average page views on nonPromo and events
+        nonPromoAvg = nonPromo["page_views"].mean()
+        eventsAvg = events["page_views"].mean()
+
+        # Compute for the percentage increase
+        percentage = ((eventsAvg - nonPromoAvg) / nonPromoAvg) * 100
+
+        # Return the DataFrame as a JSON response
+        return {
+            "non_promo": nonPromoAvg,
+            "events_promo": eventsAvg,
+            "percentage": percentage,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
