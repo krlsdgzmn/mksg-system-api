@@ -503,11 +503,19 @@ async def read_promotional_metrics(month: str, db: Session = Depends(get_db)):
         # Compute for the percentage increase
         percentage = ((eventsAvg - nonPromoAvg) / nonPromoAvg) * 100
 
+        # Get the highest performing event
+        bar = events.groupby("event")["page_views"].mean()
+        highestEvent = bar.idxmax()
+
+        intepretation = f"For the month of {month}, it can be seen that during promotional days a {percentage:.2f}% event impact is observed, with {highestEvent} as the best performing event for this month as seen on the bar chart. The line chart shows that the peak hour during mid-month salary pay events is at {df_grouped['Mid-Month'].idxmax()}:00, during end-month salary pay events at {df_grouped['End-Month'].idxmax()}:00, and during the {value}.{value} monthly event at {df_grouped['Monthly Promo'].idxmax()}:00."
+
         # Return the DataFrame as a JSON response
         return {
             "non_promo": nonPromoAvg,
             "events_promo": eventsAvg,
             "percentage": percentage,
+            "highest_event": highestEvent,
+            "intepretation": intepretation,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
